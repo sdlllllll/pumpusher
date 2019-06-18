@@ -1,6 +1,13 @@
 import time
 
 
+def bcc(s):
+    b = 0x00
+    for i in range(0, len(s), 2):
+        b = b ^ int(s[i:i+2], 16)
+    return '{:02x}'.format(b)
+
+
 def send(s):
     for i in range(0, len(s), 2):
         pump.write(bytes.fromhex(s[i:i+2]))
@@ -26,6 +33,15 @@ def set_syringe(comp, volume):
             arguments_code = volume
         else:
             print("[Error] wrong volume arguments.")
+            return 1
+    elif comp == "BD":
+        mode_code = "4d"    #M
+        if volume == "0.5ml_plastic":
+            arguments_code = "4201" #B1
+        elif volume == "1ml_glass":
+            arguments_code = "4302" #C2
+        else:
+            return 2
     else:
         print("[Error] wrong company arguments.")
         return
@@ -103,6 +119,5 @@ def make_message(addr, pdu):
             newpdu = newpdu + i
     l = '{:02x}'.format(int(len(newpdu)/2))
     body = addr + l + newpdu
-    bcccheck = bcc.bcc(body)
+    bcccheck = bcc(body)
     return 'e9'+body+bcccheck
-
