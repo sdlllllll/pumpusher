@@ -4,13 +4,13 @@ Programing control LSP longerpump. Input config file name, program
 will automatic check config feasibility and run after press [ENTER].
 Config file should write as [config_template.csv].
 
-Version: 1.0
+Version: 2.0
 """
-
-import serial
-
+import threading
 import time
 import csv
+
+import serial
 
 
 def ex(s):
@@ -36,7 +36,9 @@ def receive():
     time.sleep(0.1)
     return_message = pump.read_all()
     return_message = return_message.replace(b'\xe8\x01',b'\xe9').replace(b'\xe8\x00',b'\xe8')
-    return return_message
+    pdu = return_message.hex()
+    pdu = pdu[6:-2]
+    return pdu
 
 
 def set_syringe(comp, volume, ):
@@ -122,7 +124,7 @@ def set_flow(volume, volume_unit, flow, flow_unit):
     return CWT1+volume_code+volume_unit_code+flow_code+flow_unit_code
 
 
-def make_message(addr, pdu):
+def make_message(a, pdu):
     newpdu = ''
     pdulist = []
     for i in range(0, len(pdu), 2):
@@ -130,14 +132,21 @@ def make_message(addr, pdu):
     for i in pdulist:
         if i == 'e8':
             newpdu = newpdu + i + '00'
-        if i == 'e9':
+        elif i == 'e9':
             newpdu = newpdu + 'e8' + '01'
         else:
             newpdu = newpdu + i
-    l = '{:02x}'.format(int(len(newpdu)/2))
+    l = '{:02x}'.format(int(len(pdulist)))
+    addr = '{:02x}'.format(int(a))
     body = addr + l + newpdu
     bcccheck = bcc(body)
     return 'e9'+body+bcccheck
+
+
+def pump_start(addr, pdu):
+    send(make_message(addr, pdu))
+    send(make_message(addr, start))
+    print(pdu)
 
 
 # open pump serial
@@ -148,54 +157,91 @@ pump.parity = serial.PARITY_EVEN
 pump.stopbits = serial.STOPBITS_ONE
 pump.open()
 
-addr = "01"
-
 # standard message
-start = "e901044357580148"
-stop = "e901044357580049"
-read_flow = 'e9010343525447'
-read_syringe = 'e9010343524457'
-yes = b'\xe9\x01\x01YY'
+start = "43575801"
+stop = "43575800"
+read_flow = '435254'
+read_syringe = '435244'
+yes = '59'
 
 csv_name = input("Please input config csv name:")
+# csv_name = 'config2.csv'
 with open(csv_name) as f:
     f_csv = csv.reader(f)
-    head = next(f_csv)
-    if not head == ['syringe ID(0.01mm)', 'flow', 'flow unit', 'flow time(s)', 'stop time(s)']:
-        print('Head line wrong, please check config file.')
-        exit()
-    line_number = 0
+    body = []
+    i = 0
     for row in f_csv:
-        line_number = line_number + 1
-        send(make_message(addr, set_syringe('custom', row[0])))
-        if receive() == yes:
-            send(read_syringe)
-            check_tmp = receive()[6:8]
-            if not check_tmp == bytes.fromhex(set_syringe('custom', row[0]))[4:6]:
-                print('Cannot set syringe ID at {}.'.format(line_number))
+        body.append([])
+        body[i] = []
+        for colum in row:
+            body[i].append(colum)
+        i +=1
+    for step in body:
+        i = 0
+        j = 1
+        for argument in step:
+            if i == 0:
+                pass
+            if i == 1:
+                addr = argument
+            if i == 2:
+                if argument == 'start':
+                    flag = True
+                elif argument == 'stop':
+                    flag = False
+                else:
+                    print('Parameter error at {}, {}.'.format(j,i))
+                    exit()
+            if i == 3:
+                flow_rate = argument
+            if i == 4:
+                flow_unit = argument
+            i += 1
+        if flag:
+            send(make_message(addr, set_flow(0, '1ml', flow_rate, flow_unit)))
+            receive_tmp = receive()
+            if receive_tmp == yes:
+                send(make_message(addr, read_flow))
+                receive_tmp = receive()
+                if not receive_tmp[6:18] == set_flow(0, '1ml', flow_rate, flow_unit)[8:20]:
+                    print('Cannot set flow rate at line {}.'.format(j))
+                    exit()
+            else:
+                print('Unknown error.')
                 exit()
-        send(make_message(addr, set_flow(0, '1ml', row[1], row[2])))
-        if receive() == yes:
-            send(read_flow)
-            check_tmp = receive()[6:12]
-            if not bytes.fromhex(set_flow(0,'1ml',row[1],row[2]))[4:10] == check_tmp:
-                print('Cannot set flow at {}.'.format(line_number))
-                exit()
-    f.seek(0.0)
+            time.sleep(1)
+        j += 1
     print('Config file is OK.')
     input('Press [ENTER] start program.')
-    head = next(f_csv)
-    for row in f_csv:
-        send(make_message(addr,set_syringe('custom',row[0])))
-        print("Set syringe ID as {} mm.".format(int(row[0])*0.01))
-        send(make_message(addr,set_flow(0,'1ml',row[1],row[2])))
-        print("Set flow as {} {}.".format(row[1],row[2]))
-        send(start)
-        print("Start push for {} min.".format(eval(row[3])/60))
-        time.sleep(eval(row[3]))
-        send(stop)
-        print("Stop flow for {} min.".format(eval(row[4])/60))
-        time.sleep(eval(row[4]))
+    for step in body:
+        i = 0
+        for argument in step:
+            if i == 0:
+                step_time = eval(argument)
+            if i == 1:
+                addr = argument
+            if i == 2:
+                if argument == 'start':
+                    flag = True
+                elif argument == 'stop':
+                    flag = False
+                else:
+                    print('Parameter error at {}, {}.'.format(j,i))
+                    exit()
+            if i == 3:
+                flow_rate = argument
+            if i == 4:
+                flow_unit = argument
+            i += 1
+        if flag:
+            s = threading.Timer(step_time, pump_start, args=(addr, set_flow(0,'1ml',flow_rate,flow_unit),))
+            s.start()
+        elif not flag:
+            s = threading.Timer(step_time, send, args=(make_message(addr, stop),))
+            s.start()
+
+    print('Wait for all pump.')
+    s.join()
 print('Program finished.')
-print('Press [ENTER] quit.')
+input('Press [ENTER] quit.')
 exit()
