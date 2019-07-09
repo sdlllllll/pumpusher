@@ -4,7 +4,7 @@ Programing control LSP longerpump. Input config file name, program
 will automatic check config feasibility and run after press [ENTER].
 Config file should write as [config_template.csv].
 
-Version: 2.0
+Version: 2.1
 """
 import threading
 import time
@@ -146,6 +146,7 @@ def make_message(a, pdu):
 def pump_start(addr, pdu):
     send(make_message(addr, pdu))
     send(make_message(addr, start))
+    print(time.asctime(time.localtime(time.time())))
     print(pdu)
 
 
